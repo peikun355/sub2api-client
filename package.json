@@ -1,7 +1,7 @@
 {
-  "name": "cc-switch",
+  "name": "sub2api-client",
   "version": "3.18.0",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "description": "One-click Codex setup client for Sub2API, with CC Switch advanced mode",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",
@@ -13,7 +13,8 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "test:manifest": "node scripts/generate-download-manifest.check.mjs"
   },
   "keywords": [],
   "author": "Jason Young",

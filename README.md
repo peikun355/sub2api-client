@@ -1,3 +1,15 @@
+> [!IMPORTANT]
+> **Sub2API Client** is an independent MIT-licensed fork of
+> [CC Switch](https://github.com/farion1231/cc-switch), customized for one-click
+> Codex setup on [ai.tavonilo.com](https://ai.tavonilo.com). It is not an official
+> CC Switch release. The beginner mode and `sub2api://` protocol are specific to
+> this fork; the full upstream feature set remains available in advanced mode.
+>
+> Free `community-v*` builds are GitHub prereleases. Their Tauri update payloads
+> and SHA-256 hashes are verifiable, but Windows shows **Unknown publisher** and
+> macOS builds are ad-hoc signed without Apple notarization. Read
+> [COMMUNITY_RELEASE.md](COMMUNITY_RELEASE.md) before installing.
+
 <div align="center">
 
 # CC Switch

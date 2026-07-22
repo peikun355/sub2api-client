@@ -3014,5 +3014,29 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "sub2api": {
+    "title": "Codex を Sub2API に接続",
+    "subtitle": "Web サイトのワンタイムリンクまたは API キーを使用します。Codex 設定を変更する前に /v1/models を検証します。",
+    "advanced": "詳細モード",
+    "connected": "Sub2API が有効です",
+    "notConnected": "Codex は未設定です",
+    "preparing": "安全な設定を読み込み中…",
+    "confirmTitle": "変更内容を確認",
+    "site": "サイト",
+    "model": "モデル",
+    "reasoning": "推論強度",
+    "backupNotice": "既存の Codex ファイルをバックアップします。API キーはログやリンクに記録されません。",
+    "verifying": "検証中…",
+    "confirm": "検証して設定",
+    "cancel": "キャンセル",
+    "success": "Codex の設定が完了しました",
+    "restart": "新しいセッションの前に Codex または Codex App を再起動してください。",
+    "confirmPending": "ローカル設定は完了しましたが、Web サイトへ通知できませんでした。クイックスタートに戻り「接続を確認」をクリックしてオンボーディングを完了してください。",
+    "fromWebsite": "Web サイトから設定",
+    "orManual": "またはキーを手動入力",
+    "keyPlaceholder": "Sub2API API キー",
+    "continue": "続行",
+    "security": "本番ビルドは https://ai.tavonilo.com のみを信頼します"
   }
 }

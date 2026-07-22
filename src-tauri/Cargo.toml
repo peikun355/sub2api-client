@@ -1,10 +1,10 @@
 [package]
-name = "cc-switch"
+name = "sub2api-client"
 version = "3.18.0"
-description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+description = "One-click Codex setup client for Sub2API, with CC Switch advanced mode"
 authors = ["Jason Young"]
 license = "MIT"
-repository = "https://github.com/farion1231/cc-switch"
+repository = "https://github.com/lpk123/sub2api-client"
 edition = "2021"
 rust-version = "1.85.0"
 

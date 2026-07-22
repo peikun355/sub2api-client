@@ -95,6 +95,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { Sub2APIQuickStart } from "@/components/sub2api/Sub2APIQuickStart";
 
 type View =
   | "providers"
@@ -167,7 +168,7 @@ const getInitialView = (): View => {
   return "providers";
 };
 
-function App() {
+function AdvancedApp() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -1668,6 +1669,17 @@ function App() {
       <FirstRunNoticeDialog />
     </div>
   );
+}
+
+function App() {
+  const [advanced, setAdvanced] = useState(
+    () => import.meta.env.MODE === "test" || localStorage.getItem("sub2api-advanced-mode") === "true",
+  );
+  if (advanced) return <AdvancedApp />;
+  return <Sub2APIQuickStart onAdvanced={() => {
+    localStorage.setItem("sub2api-advanced-mode", "true");
+    setAdvanced(true);
+  }} />;
 }
 
 export default App;

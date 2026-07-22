@@ -34,6 +34,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod sub2api_brand;
 
 mod tray;
 mod usage_events;
@@ -229,6 +230,32 @@ fn handle_deeplink_url(
     focus_main_window: bool,
     source: &str,
 ) -> bool {
+    if url_str.starts_with("sub2api://") {
+        match crate::sub2api_brand::parse_setup_ticket(url_str) {
+            Ok(ticket) => {
+                if let Some(state) = app.try_state::<commands::Sub2APISetupState>() {
+                    state.queue_ticket(ticket.clone());
+                }
+                if let Err(error) =
+                    app.emit("sub2api-setup", serde_json::json!({ "ticket": ticket }))
+                {
+                    log::error!("Failed to dispatch Sub2API setup event: {error}");
+                }
+                if focus_main_window {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+            Err(error) => {
+                log::warn!("Rejected an invalid Sub2API setup link: {error}");
+                let _ = app.emit("sub2api-setup-error", "Invalid or expired setup link");
+            }
+        }
+        return true;
+    }
     if !url_str.starts_with("ccswitch://") {
         return false;
     }
@@ -1035,7 +1062,7 @@ pub fn run() {
 
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .tooltip("CC Switch") // 鼠标悬停提示
+				.tooltip(crate::sub2api_brand::PRODUCT_NAME)
                 .on_tray_icon_event(|tray, event| match event {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
@@ -1086,7 +1113,8 @@ pub fn run() {
                 app.handle().clone(),
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
-            app.manage(app_state);
+			app.manage(app_state);
+			app.manage(commands::Sub2APISetupState::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1442,6 +1470,11 @@ pub fn run() {
             commands::merge_deeplink_config,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
+			commands::sub2api_prepare_ticket,
+			commands::sub2api_prepare_manual,
+			commands::sub2api_apply_setup,
+			commands::sub2api_setup_status,
+			commands::sub2api_take_queued_ticket,
             update_tray_menu,
             // Environment variable management
             commands::check_env_conflicts,
@@ -1724,7 +1757,14 @@ pub fn run() {
                             url_for_log(&url_str)
                         );
 
-                        if url_str.starts_with("ccswitch://") {
+						if url_str.starts_with("sub2api://") {
+							if crate::lightweight::is_lightweight_mode() {
+								if let Err(error) = crate::lightweight::exit_lightweight_mode(app_handle) {
+									log::error!("Failed to leave lightweight mode: {error}");
+								}
+							}
+							handle_deeplink_url(app_handle, &url_str, true, "RunEvent::Opened");
+						} else if url_str.starts_with("ccswitch://") {
                             if crate::lightweight::is_lightweight_mode() {
                                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
                                 {

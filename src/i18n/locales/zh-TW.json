@@ -2986,5 +2986,29 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "sub2api": {
+    "title": "將 Codex 連線到 Sub2API",
+    "subtitle": "從網站使用一次性連結，或手動輸入 API 金鑰。用戶端會先驗證 /v1/models，再修改 Codex 設定。",
+    "advanced": "進階模式",
+    "connected": "Sub2API 已啟用",
+    "notConnected": "Codex 尚未設定",
+    "preparing": "正在安全取得設定…",
+    "confirmTitle": "確認將要修改的內容",
+    "site": "站點",
+    "model": "模型",
+    "reasoning": "推理強度",
+    "backupNotice": "現有 Codex 設定會先備份。API 金鑰不會寫入記錄，也不會出現在連結中。",
+    "verifying": "正在驗證…",
+    "confirm": "驗證並設定",
+    "cancel": "取消",
+    "success": "Codex 設定成功",
+    "restart": "請關閉並重新開啟 Codex 或 Codex App，再開始新的工作階段。",
+    "confirmPending": "本機設定已成功，但暫時無法通知網站。請返回快速開始頁點擊「檢查連線」以完成引導。",
+    "fromWebsite": "從網站一鍵設定",
+    "orManual": "或手動輸入金鑰",
+    "keyPlaceholder": "Sub2API API 金鑰",
+    "continue": "繼續",
+    "security": "正式版本僅信任 https://ai.tavonilo.com"
   }
 }

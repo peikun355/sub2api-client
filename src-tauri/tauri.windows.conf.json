@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CC Switch",
+        "title": "Sub2API Client",
         "titleBarStyle": "Visible",
         "visible": false,
         "minWidth": 900,

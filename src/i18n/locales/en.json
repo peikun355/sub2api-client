@@ -3014,5 +3014,29 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "sub2api": {
+    "title": "Connect Codex to Sub2API",
+    "subtitle": "Use a one-time link from the website or enter an API key. The client verifies /v1/models before changing your Codex configuration.",
+    "advanced": "Advanced mode",
+    "connected": "Sub2API is active",
+    "notConnected": "Codex is not configured yet",
+    "preparing": "Loading secure setup…",
+    "confirmTitle": "Review the changes",
+    "site": "Site",
+    "model": "Model",
+    "reasoning": "Reasoning",
+    "backupNotice": "Your existing Codex files will be backed up. The API key is never written to logs or placed in a link.",
+    "verifying": "Verifying…",
+    "confirm": "Verify and configure",
+    "cancel": "Cancel",
+    "success": "Codex is configured",
+    "restart": "Close and reopen Codex or the Codex app before starting a new session.",
+    "confirmPending": "Local setup succeeded, but the website could not be notified. Return to Quick Start and click Check connection to finish onboarding.",
+    "fromWebsite": "Configure from website",
+    "orManual": "or enter a key manually",
+    "keyPlaceholder": "Sub2API API key",
+    "continue": "Continue",
+    "security": "Production builds only trust https://ai.tavonilo.com"
   }
 }

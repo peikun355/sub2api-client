@@ -4,25 +4,92 @@ on:
   push:
     tags:
       - 'v*'
+      - 'community-v*'
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  stable-release-preflight:
+    name: Stable release credential gate
+    runs-on: ubuntu-22.04
+    environment: release
+    env:
+      TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+      AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+      AZURE_ARTIFACT_SIGNING_PROFILE_NAME: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE_NAME }}
+      APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+      OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+      CLIENT_CDN_BASE_URL: ${{ secrets.CLIENT_CDN_BASE_URL }}
+      RELEASE_CHANNEL: ${{ startsWith(github.ref_name, 'community-v') && 'community' || 'stable' }}
+    steps:
+      - name: Refuse an unsigned or unmirrored stable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(TAURI_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing stable release credential: $name" >&2
+              exit 1
+            fi
+          done
+          if [ "$RELEASE_CHANNEL" = community ]; then
+            echo "Community preview release: OS vendor certificates and domestic mirror credentials are optional"
+            exit 0
+          fi
+          stable_required=(APPLE_CERT APPLE_CERT_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID KEYCHAIN_PASSWORD OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_ENDPOINT OSS_BUCKET CLIENT_CDN_BASE_URL)
+          for name in "${stable_required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing stable release credential: $name" >&2
+              exit 1
+            fi
+          done
+          if [ -n "${WINDOWS_CERT:-}" ] && [ -n "${WINDOWS_CERT_PASSWORD:-}" ]; then
+            echo "Windows signing mode: PFX"
+          else
+            azure_required=(AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_ARTIFACT_SIGNING_ENDPOINT AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME AZURE_ARTIFACT_SIGNING_PROFILE_NAME)
+            for name in "${azure_required[@]}"; do
+              if [ -z "${!name:-}" ]; then
+                echo "Missing Windows signing credential: provide the PFX pair or all Azure Artifact Signing values; missing $name" >&2
+                exit 1
+              fi
+            done
+            echo "Windows signing mode: Azure Artifact Signing"
+          fi
+
   release:
     runs-on: ${{ matrix.os }}
     environment: release
+    needs: stable-release-preflight
+    env:
+      RELEASE_CHANNEL: ${{ startsWith(github.ref_name, 'community-v') && 'community' || 'stable' }}
+      WINDOWS_SIGNING_MODE: ${{ startsWith(github.ref_name, 'community-v') && 'unsigned' || (secrets.AZURE_CLIENT_ID != '' && 'azure' || 'pfx') }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-2022
-          - os: windows-11-arm
-            arch: arm64
           - os: ubuntu-22.04
           - os: ubuntu-22.04-arm
             arch: arm64
@@ -39,11 +106,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Add Windows ARM64 target
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: rustup target add aarch64-pc-windows-msvc
 
       - name: Add macOS targets
         if: runner.os == 'macOS'
@@ -83,49 +145,22 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: pnpm/action-setup@v6
         with:
           version: 10.12.3
           run_install: false
 
-      - name: Setup pnpm (Windows ARM64)
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          corepack enable
-          corepack prepare pnpm@10.12.3 --activate
-          node --version
-          pnpm --version
-
       - name: Get pnpm store directory
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
         shell: bash
         run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
-      - name: Setup LLVM for Windows ARM64
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $llvmRoot = 'C:\Program Files\LLVM'
-          if (-not (Test-Path $llvmRoot)) {
-            throw "LLVM not found at $llvmRoot"
-          }
-          $llvmBin = Join-Path $llvmRoot 'bin'
-          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -161,7 +196,6 @@ jobs:
                 echo "✅ 使用一行 Base64 私钥，已构造两行文件"
               else
                 echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别：既不是两行原文，也不是其 base64，亦非一行 base64" >&2
-                echo "密钥前10个字符: $(echo "$RAW" | head -c 10)..." >&2
                 exit 1
               fi
             fi
@@ -187,7 +221,7 @@ jobs:
           echo "✅ Tauri signing key prepared"
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.RELEASE_CHANNEL == 'stable'
         shell: bash
         run: |
           set -euo pipefail
@@ -228,8 +262,8 @@ jobs:
           # Cleanup certificate file
           rm -f "$CERT_PATH"
 
-      - name: Build Tauri App (macOS)
-        if: runner.os == 'macOS'
+      - name: Build Tauri App (macOS stable)
+        if: runner.os == 'macOS' && env.RELEASE_CHANNEL == 'stable'
         shell: bash
         timeout-minutes: 60
         env:
@@ -257,18 +291,104 @@ jobs:
             sleep "$sleep_seconds"
           done
 
-      - name: Build Tauri App (Windows)
+      - name: Build Tauri App (macOS community preview)
+        if: runner.os == 'macOS' && env.RELEASE_CHANNEL == 'community'
+        shell: bash
+        timeout-minutes: 60
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: |
+          set -euo pipefail
+          pnpm tauri build --target universal-apple-darwin
+
+      - name: Build Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
+          WINDOWS_RELEASE_ARCH: x86_64
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
-            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
-          } else {
-            pnpm tauri build
-          }
+          $targetDirectory = 'src-tauri/target/release'
+          pnpm tauri build --no-bundle
+          $executable = Get-ChildItem -Path $targetDirectory -Filter '*.exe' -File | Where-Object { $_.Name -notmatch 'build-script' } | Select-Object -First 1
+          if (-not $executable) { throw 'Windows executable was not produced' }
+          "WINDOWS_EXE_PATH=$($executable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Azure login for Windows signing
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE == 'azure'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows executable with Azure Artifact Signing
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE == 'azure'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE_NAME }}
+          files: ${{ github.workspace }}\src-tauri\target\release\sub2api-client.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign Windows executable with PFX
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE == 'pfx'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'windows-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "$env:WINDOWS_EXE_PATH"
+
+      - name: Verify Windows executable signature
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE != 'unsigned'
+        shell: pwsh
+        run: signtool verify /pa /v "$env:WINDOWS_EXE_PATH"
+
+      - name: Bundle Windows MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm tauri bundle --bundles msi
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Filter '*.msi' -File | Select-Object -First 1
+          if (-not $msi) { throw 'Windows MSI was not produced' }
+          "WINDOWS_MSI_PATH=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Sign Windows MSI with Azure Artifact Signing
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE == 'azure'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\src-tauri\target\release\bundle\msi
+          files-folder-filter: '*.msi'
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign Windows MSI with PFX
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE == 'pfx'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'windows-signing.pfx'
+          & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "$env:WINDOWS_MSI_PATH"
+          Remove-Item $certificatePath -Force
+
+      - name: Verify Windows MSI signature
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_MODE != 'unsigned'
+        shell: pwsh
+        run: signtool verify /pa /v "$env:WINDOWS_MSI_PATH"
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
@@ -304,44 +424,52 @@ jobs:
             exit 1
           fi
 
-          # Staple notarization ticket to .app (Tauri already notarized it)
-          xcrun stapler staple "$APP_PATH"
-          echo "✅ .app stapled"
+          if [ "$RELEASE_CHANNEL" = stable ]; then
+            # Tauri notarized the app during the stable build.
+            xcrun stapler staple "$APP_PATH"
+            echo "✅ .app stapled"
+          else
+            # Free community builds are ad-hoc signed for bundle integrity only.
+            codesign --force --deep --sign - "$APP_PATH"
+            codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+            echo "✅ Community .app ad-hoc signature verified"
+          fi
 
           # 1) Collect .tar.gz (updater artifact)
-          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+          NEW_TAR_GZ="Sub2API-Client-${VERSION}-macOS.tar.gz"
           cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
           [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
           echo "macOS updater artifact copied: $NEW_TAR_GZ"
 
           # 2) Collect .app as zip
-          NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
+          NEW_ZIP="Sub2API-Client-${VERSION}-macOS.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
           echo "macOS zip ready: $NEW_ZIP"
 
           # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+          if [ "$RELEASE_CHANNEL" = stable ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "❌ APPLE_SIGNING_IDENTITY is missing before DMG creation" >&2
             exit 1
           fi
+          DMG_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 
           HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
-          NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
+          NEW_DMG="Sub2API-Client-${VERSION}-macOS.dmg"
           DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
           rm -rf "$DMG_STAGE_DIR"
           mkdir -p "$DMG_STAGE_DIR"
-          ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
+          ditto "$APP_PATH" "$DMG_STAGE_DIR/Sub2API Client.app"
 
           create-dmg \
-            --volname "CC Switch" \
+            --volname "Sub2API Client" \
             --background "src-tauri/icons/dmg-background.png" \
             --window-size 660 400 \
             --window-pos 200 120 \
             --icon-size 80 \
-            --icon "CC Switch.app" 180 220 \
-            --hide-extension "CC Switch.app" \
+            --icon "Sub2API Client.app" 180 220 \
+            --hide-extension "Sub2API Client.app" \
             --app-drop-link 480 220 \
-            --codesign "$APPLE_SIGNING_IDENTITY" \
+            --codesign "$DMG_SIGNING_IDENTITY" \
             --no-internet-enable \
             "release-assets/$NEW_DMG" \
             "$DMG_STAGE_DIR"
@@ -350,7 +478,7 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.RELEASE_CHANNEL == 'stable'
         shell: bash
         timeout-minutes: 30
         env:
@@ -416,10 +544,14 @@ jobs:
           echo "=== Verifying .app: $APP_PATH ==="
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✅ codesign verification passed"
-          spctl -a -t exec -vv "$APP_PATH"
-          echo "✅ spctl assessment passed"
-          xcrun stapler validate "$APP_PATH"
-          echo "✅ .app stapler validation passed"
+          if [ "$RELEASE_CHANNEL" = stable ]; then
+            spctl -a -t exec -vv "$APP_PATH"
+            echo "✅ spctl assessment passed"
+            xcrun stapler validate "$APP_PATH"
+            echo "✅ .app stapler validation passed"
+          else
+            echo "ℹ️ Community preview intentionally skips Gatekeeper and notarization checks"
+          fi
 
           # Verify .dmg (from release-assets/, created by create-dmg + notarized)
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
@@ -427,10 +559,12 @@ jobs:
             echo "=== Verifying .dmg: $DMG_PATH ==="
             codesign --verify --verbose=2 "$DMG_PATH"
             echo "✅ .dmg codesign verification passed"
-            spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
-            echo "✅ .dmg spctl assessment passed"
-            xcrun stapler validate "$DMG_PATH"
-            echo "✅ .dmg stapler validation passed"
+            if [ "$RELEASE_CHANNEL" = stable ]; then
+              spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
+              echo "✅ .dmg spctl assessment passed"
+              xcrun stapler validate "$DMG_PATH"
+              echo "✅ .dmg stapler validation passed"
+            fi
           else
             echo "❌ No .dmg found for verification — release would ship without verified DMG" >&2
             exit 1
@@ -439,15 +573,11 @@ jobs:
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
-          $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
-          $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
-          $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
+          $targetRoot = 'src-tauri/target/release'
 
           # 仅打包 MSI 安装器 + .sig（用于 Updater）
           $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -456,60 +586,38 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
-            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
+            $dest = "Sub2API-Client-$VERSION-Windows.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
             $sigPath = "$($msi.FullName).sig"
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
-            } elseif ($isArm64) {
-              throw "Signature not found for $($msi.Name)"
             } else {
-              Write-Warning "Signature not found for $($msi.Name)"
+              throw "Tauri updater signature not found for $($msi.Name)"
             }
-          } elseif ($isArm64) {
-            throw 'No Windows ARM64 MSI installer found'
           } else {
-            Write-Warning 'No Windows MSI installer found'
+            throw 'No Windows MSI installer found'
           }
 
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
-          $exeCandidates = if ($isArm64) {
-            @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
-          } else {
-            @(
-              'src-tauri/target/release/cc-switch.exe',
-              'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
-            )
-          }
-          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($null -ne $exePath) {
-            $portableDir = 'release-assets/CC-Switch-Portable'
+          $exePath = $env:WINDOWS_EXE_PATH
+          if ($exePath -and (Test-Path $exePath)) {
+            $portableDir = 'release-assets/Sub2API-Client-Portable'
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $exePath $portableDir
             $portableIniPath = Join-Path $portableDir 'portable.ini'
-            $portableContent = if ($isArm64) {
-              @(
-                '# CC Switch portable ARM64 build marker',
-                'portable=true',
-                'arch=arm64'
-              )
-            } else {
-              @(
-                '# CC Switch portable build marker',
-                'portable=true'
-              )
-            }
+            $portableContent = @(
+              '# Sub2API Client portable build marker',
+              'portable=true'
+            )
             $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+            $portableZip = "release-assets/Sub2API-Client-$VERSION-Windows-Portable.zip"
             Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
             Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
-          } elseif ($isArm64) {
-            throw 'Portable ARM64 exe not found'
+            Write-Host "Windows portable zip created: Sub2API-Client-$VERSION-Windows-Portable.zip"
           } else {
-            Write-Warning 'Portable exe not found'
+            throw 'Portable exe not found'
           }
 
       - name: Prepare Linux Assets
@@ -523,7 +631,7 @@ jobs:
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
-            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
+            NEW_APPIMAGE="Sub2API-Client-${VERSION}-Linux-${ARCH}.AppImage"
             cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
             [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
             echo "AppImage copied: $NEW_APPIMAGE"
@@ -533,16 +641,16 @@ jobs:
           # 额外上传 .deb（用于手动安装，不参与 Updater）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
-            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            cp "$DEB" "release-assets/Sub2API-Client-${VERSION}-Linux-${ARCH}.deb"
+            echo "Deb package copied: Sub2API-Client-${VERSION}-Linux-${ARCH}.deb"
           else
             echo "No .deb found (optional)"
           fi
           # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$RPM" ]; then
-            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            cp "$RPM" "release-assets/Sub2API-Client-${VERSION}-Linux-${ARCH}.rpm"
+            echo "RPM package copied: Sub2API-Client-${VERSION}-Linux-${ARCH}.rpm"
           else
             echo "No .rpm found (optional)"
           fi
@@ -608,27 +716,31 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: CC Switch ${{ github.ref_name }}
-          prerelease: true
+          name: Sub2API Client ${{ github.ref_name }}
+          prerelease: ${{ startsWith(github.ref_name, 'community-v') }}
+          make_latest: ${{ startsWith(github.ref_name, 'community-v') && 'false' || 'true' }}
           body: |
-            ## CC Switch ${{ github.ref_name }}
+            ## Sub2API Client ${{ github.ref_name }}
 
-            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ai.tavonilo.com](https://ai.tavonilo.com)
 
-            Claude Code 供应商切换工具
+            面向 ai.tavonilo.com 的 Codex 一键配置客户端。
+
+            > ${{ startsWith(github.ref_name, 'community-v') && '⚠️ 社区预览版：Tauri 更新包签名与 SHA-256 校验有效，但 Windows 没有商业 Authenticode 证书，macOS 没有 Apple 公证。安装时会出现系统安全提示，请只从本站或本仓库下载。' || '✅ 正式稳定版：Windows Authenticode、macOS Developer ID 与 Apple 公证均已通过。' }}
 
             ### 下载
 
-            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
-            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
-            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+            - **macOS**: `Sub2API-Client-${{ github.ref_name }}-macOS.dmg`（推荐）或 `Sub2API-Client-${{ github.ref_name }}-macOS.zip`（解压即用）
+            - **Windows (x86_64)**: `Sub2API-Client-${{ github.ref_name }}-Windows.msi`（安装版）或 `Sub2API-Client-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `Sub2API-Client-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `Sub2API-Client-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
-            ---
-            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
+            ### 社区预览版安装提示
+
+            - Windows：优先使用 Portable ZIP；出现 SmartScreen 时核对 SHA-256 后选择“更多信息 → 仍要运行”。
+            - macOS：右键应用并选择“打开”；仍被阻止时，在终端运行 `xattr -dr com.apple.quarantine '/Applications/Sub2API Client.app'`。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -661,6 +773,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
+          if [[ "$TAG" == community-v* ]]; then
+            VERSION="${TAG#community-v}"
+          fi
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 初始化空平台映射
@@ -737,3 +852,60 @@ jobs:
         run: |
           set -euxo pipefail
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+  publish-domestic-mirror:
+    name: Publish download manifest and optional domestic mirror
+    runs-on: ubuntu-22.04
+    needs: assemble-latest-json
+    environment: release
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      AWS_DEFAULT_REGION: cn-hangzhou
+      AWS_EC2_METADATA_DISABLED: 'true'
+      OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+      OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+      CDN_BASE_URL: ${{ secrets.CLIENT_CDN_BASE_URL }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_CHANNEL: ${{ startsWith(github.ref_name, 'community-v') && 'community' || 'stable' }}
+    steps:
+      - name: Checkout manifest generator
+        uses: actions/checkout@v6
+
+      - name: Download release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$GITHUB_REF_NAME" --dir release-assets --repo "$GITHUB_REPOSITORY"
+
+      - name: Generate and validate download manifest with SHA-256
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/generate-download-manifest.mjs release-assets client-download-manifest.json
+
+      - name: Attach download manifest to GitHub Release
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" client-download-manifest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Update fixed community manifest endpoint
+        if: env.RELEASE_CHANNEL == 'community'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view community-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create community-latest --repo "$GITHUB_REPOSITORY" --prerelease --title 'Sub2API Client community latest' --notes 'Mutable download-manifest pointer for the latest free community preview.'
+          fi
+          gh release upload community-latest client-download-manifest.json release-assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload versioned assets and site-first manifests
+        if: env.RELEASE_CHANNEL == 'stable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check awscli
+          prefix="sub2api-client/$GITHUB_REF_NAME"
+          aws --endpoint-url "$OSS_ENDPOINT" s3 sync release-assets/ "s3://$OSS_BUCKET/$prefix/" --only-show-errors
+          aws --endpoint-url "$OSS_ENDPOINT" s3 cp client-download-manifest.json "s3://$OSS_BUCKET/sub2api-client/client-download-manifest.json" --content-type application/json --cache-control 'no-cache, no-store' --only-show-errors
+          aws --endpoint-url "$OSS_ENDPOINT" s3 cp release-assets/latest.json "s3://$OSS_BUCKET/sub2api-client/latest.json" --content-type application/json --cache-control 'no-cache, no-store' --only-show-errors
