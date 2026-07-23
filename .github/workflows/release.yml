@@ -865,7 +865,11 @@ jobs:
       AWS_EC2_METADATA_DISABLED: 'true'
       OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
       OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
-      CDN_BASE_URL: ${{ secrets.CLIENT_CDN_BASE_URL }}
+      CDN_BASE_URL: ${{ vars.CLIENT_CDN_BASE_URL || secrets.CLIENT_CDN_BASE_URL }}
+      MIRROR_DEPLOY_HOST: ${{ secrets.MIRROR_DEPLOY_HOST }}
+      MIRROR_DEPLOY_PORT: ${{ secrets.MIRROR_DEPLOY_PORT }}
+      MIRROR_DEPLOY_USER: ${{ secrets.MIRROR_DEPLOY_USER }}
+      MIRROR_DEPLOY_KEY: ${{ secrets.MIRROR_DEPLOY_KEY }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_CHANNEL: ${{ startsWith(github.ref_name, 'community-v') && 'community' || 'stable' }}
     steps:
@@ -885,6 +889,18 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/generate-download-manifest.mjs release-assets client-download-manifest.json
 
+      - name: Require site mirror deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(CDN_BASE_URL MIRROR_DEPLOY_HOST MIRROR_DEPLOY_PORT MIRROR_DEPLOY_USER MIRROR_DEPLOY_KEY)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing client mirror deployment setting: $name" >&2
+              exit 1
+            fi
+          done
+
       - name: Attach download manifest to GitHub Release
         shell: bash
         run: gh release upload "$GITHUB_REF_NAME" client-download-manifest.json --clobber --repo "$GITHUB_REPOSITORY"
@@ -898,6 +914,50 @@ jobs:
             gh release create community-latest --repo "$GITHUB_REPOSITORY" --prerelease --title 'Sub2API Client community latest' --notes 'Mutable download-manifest pointer for the latest free community preview.'
           fi
           gh release upload community-latest client-download-manifest.json release-assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Prepare verified site mirror payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "mirror-release/${GITHUB_REF_NAME}"
+          cp release-assets/* "mirror-release/${GITHUB_REF_NAME}/"
+          cp client-download-manifest.json latest.json mirror-release/
+
+      - name: Upload site mirror staging payload
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.MIRROR_DEPLOY_HOST }}
+          port: ${{ secrets.MIRROR_DEPLOY_PORT }}
+          username: ${{ secrets.MIRROR_DEPLOY_USER }}
+          key: ${{ secrets.MIRROR_DEPLOY_KEY }}
+          source: mirror-release
+          target: /home/sub2api-client-mirror/staging/${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Validate and atomically publish site mirror
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.MIRROR_DEPLOY_HOST }}
+          port: ${{ secrets.MIRROR_DEPLOY_PORT }}
+          username: ${{ secrets.MIRROR_DEPLOY_USER }}
+          key: ${{ secrets.MIRROR_DEPLOY_KEY }}
+          script: |
+            set -euo pipefail
+            tag='${{ github.ref_name }}'
+            stage='/home/sub2api-client-mirror/staging/${{ github.ref_name }}-${{ github.run_id }}/mirror-release'
+            mirror='/opt/sub2api-docs-mirror/cc-switch'
+            manifest="$stage/client-download-manifest.json"
+            test -f "$manifest"
+            jq -r '.assets[] | [(.url | split("/") | last), .sha256] | @tsv' "$manifest" | while IFS=$'\t' read -r file expected; do
+              actual=$(sha256sum "$stage/$tag/$file" | awk '{print $1}')
+              test "$actual" = "$expected"
+            done
+            if [ ! -d "$mirror/$tag" ]; then
+              mv "$stage/$tag" "$mirror/$tag"
+            fi
+            install -m 0644 "$manifest" "$mirror/client-download-manifest.json.next"
+            mv -f "$mirror/client-download-manifest.json.next" "$mirror/client-download-manifest.json"
+            install -m 0644 "$stage/latest.json" "$mirror/latest.json.next"
+            mv -f "$mirror/latest.json.next" "$mirror/latest.json"
 
       - name: Upload versioned assets and site-first manifests
         if: env.RELEASE_CHANNEL == 'stable'
