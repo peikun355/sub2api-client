@@ -97,7 +97,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -874,7 +874,7 @@ jobs:
       RELEASE_CHANNEL: ${{ startsWith(github.ref_name, 'community-v') && 'community' || 'stable' }}
     steps:
       - name: Checkout manifest generator
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download release assets
         shell: bash
